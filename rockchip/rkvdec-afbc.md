@@ -401,3 +401,44 @@ kernel runs GPLL at 1188 MHz and lists a 400 MHz decoder OPP at 900 mV.
 
 Conclusion: 4K60 H.264 on RK3566 needs both AFBC output and the 400 MHz clocks. Neither
 is enough alone.
+
+## Implementation results (RK3566, ROCK 3C, 2026-10-25)
+
+Correction to the table above: the test module wrote the payload offset into SWREG20 bits
+[27:0] in 16-byte units. MPP's `payload_st_offset` field starts at bit 4, so the register
+holds the offset in bytes, and the test placed the bodies on top of the headers. The AFBC
+rows above are therefore not valid.
+
+With the implementation (V4L2 fourccs `'AF12'`/`'AF01'`, rkvdec VDPU381 support, decoder
+clocks at 400 MHz, output not displayed):
+
+| Stream | Linear | AFBC |
+|---|---|---|
+| H.264 High 4K60 | 37 fps | 70 fps |
+| HEVC Main 4K | 58 fps | 114 fps |
+
+Findings:
+
+- **Packed bodies.** Header word 0 bits [27:0] hold the body offset from the buffer start, so
+  the first block's body sits exactly at the payload offset. Bodies follow each other packed
+  (deltas of 160-208 bytes for content and 16 bytes for flat blocks), not in fixed 384/512-byte
+  slots. The DRM modifier is therefore `DRM_FORMAT_MOD_ARM_AFBC(AFBC_FORMAT_MOD_BLOCK_SIZE_16x16)`,
+  without SPARSE, and the mainline VOP2 cluster windows list that modifier.
+- **Header encoding.** The top nibble of word 0 and the remaining 96 bits do not decode as
+  sixteen 6-bit subblock sizes the way Mesa's Panfrost header code reads RGB AFBC: the sums
+  do not match the body spacing. Only a VOP2 display test can confirm the picture.
+- **VP9 reference motion vectors.** The VDPU381 VP9 code derived the reference colmv address
+  from the reference height and line stride instead of the colmv offset where it was written.
+  With AFBC that address falls inside the payload, and the decoder hung the SoC (watchdog
+  reset). Using the colmv offset fixes it; it was also wrong for linear references smaller
+  than the capture format.
+- **Determinism.** With destination buffers cleared before each job, per-frame CRCs of two
+  120-frame runs were identical for H.264 4K, HEVC 4K and VP9 Profile 2 4K. Without clearing,
+  later frames differ only because packed bodies leave stale bytes from earlier frames behind
+  the last body.
+- **Top offset.** H.264 and HEVC report the 4-line offset through the CAPTURE
+  `V4L2_SEL_TGT_COMPOSE` rectangle. FFmpeg adds it to `crop_top` and the frame height, and
+  Kodi's DRM PRIME plane uses it as `SRC_Y`. This is unverified until it is displayed.
+- **Default.** The AFBC formats are listed after the linear ones unless the `afbc` module
+  parameter is set, because consumers that import frames through EGL (such as a Dolby Vision
+  GLES path) accept only linear frames, and RK3588 shares the VDPU381 code.
