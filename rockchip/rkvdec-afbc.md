@@ -457,8 +457,10 @@ The 4-line top offset has not yet been checked separately.
   free with a linear GUI; if so it recreates the GUI surface linear, moves the GUI to a linear
   plane and repeats the plane search. RK3568 and RK3588 are unaffected because they have
   more cluster windows.
-- **Memory bandwidth.** With AFBC disabled, 4K HEVC Main 10 playback through the linear
-  Esmart path disturbed audio on RK3566; with AFBC it did not.
+- **Audio disturbance (not AFBC related).** Audio was disturbed after toggling the `afbc`
+  parameter off during a session, and switching it back on did not clear it, so it is a more
+  general issue rather than a bandwidth effect of the linear path. The parameter is not
+  something users toggle at runtime.
 - **Black level (not AFBC related).** HDR letterbox bars looked lifted compared with an RPi5,
   with and without AFBC. The cause was a dw-hdmi WIP change that shifted the CSC offset
   terms by the output depth: for 10-bit limited-range RGB the RGB full-to-limited offset
@@ -469,4 +471,6 @@ The 4-line top offset has not yet been checked separately.
 - **Plane colour properties.** VOP2 exposes `COLOR_ENCODING`/`COLOR_RANGE` on the planes, but
   the driver does not program them: YUV-to-RGB always uses the BT.709 limited-range matrix,
   so BT.2020 content is converted with the wrong matrix. Black is unaffected; hue and
-  saturation are not exact. Not yet fixed.
+  saturation are not exact. The branch now selects the window CSC mode from the plane
+  properties (BT.601 limited/full, BT.709 limited, BT.2020 limited; the hardware has no
+  full-range BT.709 or BT.2020 mode). Not yet tested on hardware.
