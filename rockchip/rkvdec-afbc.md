@@ -473,4 +473,5 @@ The 4-line top offset has not yet been checked separately.
   so BT.2020 content is converted with the wrong matrix. Black is unaffected; hue and
   saturation are not exact. The branch now selects the window CSC mode from the plane
   properties (BT.601 limited/full, BT.709 limited, BT.2020 limited; the hardware has no
-  full-range BT.709 or BT.2020 mode). Not yet tested on hardware.
+  full-range BT.709 or BT.2020 mode). Verified on hardware: during BT.2020 playback
+  `CLUSTER0_WIN_CTRL0` selects CSC mode 3 (BT.2020 limited).
