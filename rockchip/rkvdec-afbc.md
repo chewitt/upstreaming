@@ -442,3 +442,31 @@ Findings:
 - **Default.** The AFBC formats are listed after the linear ones unless the `afbc` module
   parameter is set, because consumers that import frames through EGL (such as a Dolby Vision
   GLES path) accept only linear frames, and RK3588 shares the VDPU381 code.
+
+## Display results (RK3566, ROCK 3C, Kodi, 2026-10-26)
+
+4K HEVC Main 10 (HDR10, 24 fps) and 4K60 H.264 play smoothly in Kodi with AFBC frames
+scanned out by the VOP2 cluster window, so VOP2 accepts the decoder's header encoding.
+The 4-line top offset has not yet been checked separately.
+
+- **One AFBC plane on RK3566.** The RK3566 VOP2 exposes three planes to the video port: a
+  primary RGB plane, an Esmart plane (linear, including NV12/NV15) and a Cluster plane, which
+  is the only one that takes AFBC and the YU08/YU10 formats. Mesa gives Kodi's GUI an AFBC
+  surface, so the GUI takes the Cluster plane and no plane is left for AFBC video
+  ("Cannot find a Video Plane ... YU08"). Kodi now checks whether a video plane would be
+  free with a linear GUI; if so it recreates the GUI surface linear, moves the GUI to a linear
+  plane and repeats the plane search. RK3568 and RK3588 are unaffected because they have
+  more cluster windows.
+- **Memory bandwidth.** With AFBC disabled, 4K HEVC Main 10 playback through the linear
+  Esmart path disturbed audio on RK3566; with AFBC it did not.
+- **Black level (not AFBC related).** HDR letterbox bars looked lifted compared with an RPi5,
+  with and without AFBC. The cause was a dw-hdmi WIP change that shifted the CSC offset
+  terms by the output depth: for 10-bit limited-range RGB the RGB full-to-limited offset
+  became `0x80` instead of `0x20`. The CSC tables already express offsets relative to the CSC
+  scale (16 is `0x40` at scale 0 and `0x20` at scale 1), independent of depth. Writing `0x20`
+  back to the A4/B4/C4 registers during playback made black match the RPi5; the change is
+  reverted on the branch.
+- **Plane colour properties.** VOP2 exposes `COLOR_ENCODING`/`COLOR_RANGE` on the planes, but
+  the driver does not program them: YUV-to-RGB always uses the BT.709 limited-range matrix,
+  so BT.2020 content is converted with the wrong matrix. Black is unaffected; hue and
+  saturation are not exact. Not yet fixed.
