@@ -15,5 +15,6 @@ Patch tracking for Amlogic and Rockchip upstreaming efforts
 - [RK3576 VDPU383 decode performance](rockchip/rk3576-vdpu383-performance.md): cover-letter
   notes for the stride and read cache patches (20 to 86 fps 4K60 H.264).
 - [RK3566/RK3568 HDMI audio passthrough and HBR](rockchip/rk356x-hdmi-audio.md): dw-hdmi
-  IEC958/NLPCM/HBR over I2S, the hw_params ordering and keep-out fixes, and a scrambling
-  sequencing fix for sync loss.
+  IEC958/NLPCM/HBR over I2S, the hw_params ordering and keep-out fixes, modeset timing at
+  playback start (HDR metadata comparison, ELD during a modeset), scrambling order, and 10-bit
+  2160p50/60 output.

@@ -1,7 +1,9 @@
 # RK3566/RK3568 dw-hdmi audio passthrough and HBR (notes)
 
 Status: working on Rock 3C (RK3566) with branch `rockchip-7.3.y`. E-AC3, Dolby TrueHD and
-DTS-HD MA pass through cleanly. One display sync-loss fix is still untested.
+DTS-HD MA pass through cleanly, including when a title starts straight after another HDR
+title. 2160p50/60 HDR is output at 10 bits per component. The sync-loss fix in section 4 is
+not yet confirmed, and multichannel PCM channel placement (section 8) is open.
 
 RK356X uses the older dw-hdmi (v2.11a, `DWC HDMI 2.0 TX PHY`) fed by `i2s0_8ch`
 (`rockchip-i2s-tdm`). RK3588 and RK3576 use dw-hdmi-qp, which behaves differently in
@@ -79,7 +81,7 @@ Amlogic branch. With it, E-AC3, TrueHD and DTS-HD MA all play cleanly on RK3566.
 The HBR dropouts on RK3588/RK3576 (dw-hdmi-qp) are a separate issue: the qp keep-out
 setting made no difference there.
 
-## 4. Lost sync after a scrambled to unscrambled modeset (fix untested)
+## 4. Lost sync after a scrambled to unscrambled modeset (fix not yet confirmed)
 
 Stopping 2160p23.976 10-bit HDR playback (scrambled, about 371 MHz TMDS) and returning to the
 1080p60 GUI sometimes leaves the display showing "no signal". In that state:
@@ -99,7 +101,8 @@ next setup, with the PHY off, followed by a TMDS software reset.
 
 Candidate fix: "drm/bridge: dw-hdmi: disable sink scrambling after the PHY is off" powers the
 PHY off first. dw-hdmi-qp has the same ordering problem; deferring the disable to
-`atomic_enable()` fixed an AVR freeze on RK3588 scrambled to unscrambled switches.
+`atomic_enable()` fixed an AVR freeze on RK3588 scrambled to unscrambled switches. With the fix,
+stopping 2160p HDR playback has not lost sync since, but the fault was intermittent.
 
 Other sequencing differences in the Rockchip 6.6 dw-hdmi driver, not ported:
 
@@ -108,3 +111,66 @@ Other sequencing differences in the Rockchip 6.6 dw-hdmi driver, not ported:
 | Sets AVMUTE, waits 180 ms, reconfigures without a full modeset, waits 50 ms, clears AVMUTE | Pixel and TMDS clocks are unchanged |
 | Forces a test pattern (`FC_DBGFORCE`) for 50 ms after each full modeset (Konka TV workaround) | Every full modeset |
 | Enables the DRM (HDR) infoframe 300 ms after the AVI infoframe (Huawei TV workaround) | HDR output |
+
+## 5. Silent passthrough at start: a second modeset
+
+Passthrough sometimes started silent, with the AVR reporting PCM, while every transmitter
+register was correct for IEC 61937. On a start with refresh rate switching, Kodi changes the
+mode, then about 1 to 1.5 s later the renderer configures and sets the HDR metadata again.
+Passthrough opens at about the same time.
+
+Kodi creates a new `HDR_OUTPUT_METADATA` blob on every call, and the branch's HDMI state helper
+compared the old and new blobs by pointer (from a WIP HDR patch), so identical metadata forced a
+full modeset. When it landed after the bitstream had started, the sink never detected it.
+dw-hdmi's own check, and i915, amdgpu and meson, compare the contents with
+`drm_connector_atomic_hdr_metadata_equal()`.
+
+Fix: a `fixup!` of that WIP patch compares by content. Kodi PR #29744 also sends the colorspace
+and HDR metadata with the refresh-rate modeset.
+
+## 6. Passthrough at 48 kHz: empty ELD during a modeset
+
+After that fix, E-AC3 sometimes still started silent with heavy stutter: the device ran at 48 kHz
+although Kodi requested 192 kHz, and dmesg showed `hdmi-audio-codec: HDMI: Unknown ELD version 0`
+at the moment the stream opened.
+
+`hdmi_codec_startup()` turns the ELD into rate constraints. With no SADs, `eld_limit_rates()`
+allows only 32, 44.1 and 48 kHz. dw-hdmi's `hdmi_audio_get_eld()` returns the ELD of
+`curr_conn`, which `atomic_disable()` clears and `atomic_enable()` sets again, so a stream opened
+during a modeset sees an empty ELD. This happens when the renderer's update is a real modeset,
+for example when the HDR metadata in the decoded frames differs from the container's. Mainline
+dw-hdmi reads the ELD the same way.
+
+Fix: "drm/bridge: dw-hdmi: keep the audio ELD across a modeset" reads the ELD from the connector
+set by the last `atomic_enable()`, which is kept while the bridge is disabled. A real unplug
+still clears the ELD in the connector.
+
+## 7. 10-bit output at 2160p50/60
+
+2160p50/60 RGB at 10 bpc needs a TMDS character rate of 742.5 MHz, above the HDMI 2.0 limit, so
+the HDMI state helper's automatic format selection fell back to 8 bpc RGB. It tries YCbCr 4:2:0
+only when RGB fails entirely, although the sink here advertises 10 and 12-bit 4:2:0 for VIC
+96/97 and the RK3568 platform data includes YCbCr 4:2:0.
+
+- "drm/display: hdmi-state-helper: prefer YCbCr 4:2:0 for higher bpc": when RGB only fits below
+  the maximum bpc, also try YCbCr 4:2:0 and use it if it carries more bits per component. Modes
+  where RGB reaches the maximum bpc, such as 1080p60 and 2160p24 at 10 bpc, are unchanged.
+- "drm/rockchip: vop2: keep 10-bit output for 10-bit bus formats": `vop2_dither_setup()` enables
+  pre-dither-down (10 to 8 bits, `VP_DSP_CTRL` bit 16) for every output mode other than AAAA,
+  including the 10-bit 4:2:0 bus `UYYVYY10_0_5X30`. The vendor driver leaves it off for all
+  10-bit bus formats. This also applies to RK3588 4:2:0 output.
+
+Result at 2160p50: `output_format` YCbCr 4:2:0, `output_bpc` 10, dw-hdmi `TX_INVID0` 0x0b and
+`VP_PR_CD` 0x50, `VP_DSP_CTRL` 0x800E. The 8 bpc RGB path still truncates without dithering;
+mainline has no RGB888 case in `vop2_dither_setup()`, while the vendor driver pre-dithers it.
+
+## 8. Open: multichannel PCM channel placement
+
+Stereo PCM is heard on FC and FR instead of FL and FR, and 5.1 PCM has no FL. The transmitter
+metadata is correct: Kodi sends `FL FR` (or `FL FR LFE FC RL RR`), the audio infoframe carries
+the matching channel count and allocation and is sent automatically, the sample layout matches,
+and the channel numbers in the channel status are 0 (unspecified). The remaining suspect is the
+sample data alignment on I2S: the vendor `rockchip_i2s_tdm` driver notes that the HDMI controller
+ignores the first frame-sync cycle and writes one padding frame before starting transmission,
+but only enables that for the RK3588 HDMI I2S. A per-channel `speaker-test` is pending.
+
