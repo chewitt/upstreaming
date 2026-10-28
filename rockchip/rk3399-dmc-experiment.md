@@ -1,6 +1,7 @@
 # RK3399 DDR rate experiment for 4K 10-bit playback (scope)
 
-Status: scope only, no code. Board: Firefly ROC-RK3399-PC (LPDDR4), LibreELEC with
+Status: PARKED 2026-10-28. The MSCH read latency change (u-boot) is kept; the DMC
+experiment was dropped after the results below (TF-A patches and the ROC-PC DT node removed). Board: Firefly ROC-RK3399-PC (LPDDR4), LibreELEC with
 mainline u-boot TPL, upstream TF-A 2.15 and `rockchip-7.3.y`.
 
 ## Problem
@@ -139,3 +140,14 @@ the same mapping before it could be used; LibreELEC does not suspend.
 Check first, from the u-boot console (stop autoboot): `md.l 0xffa8004c 1` (DENALI_CTL_19)
 and `md.l 0xffa801bc 1` (DENALI_CTL_111, bits 17:16 = current copy) should read 0x102 and
 copy 1 on the ROC-PC. Channel 1 is at 0xffa88000.
+
+## Result 2: TF-A PHY copy mapping (2026-10-28)
+
+The u-boot console confirmed DENALI_CTL_19 = 0x00000102 and DENALI_CTL_111 = 0x01010400
+(controller copy 1). With the controller-to-PHY copy table in TF-A (PHY copy 1 written for
+controller copy 0), the switch no longer locks up at once: the system keeps running with
+corrupt memory (HDMI audio DMA played noise), then the watchdog resets it. Remaining per-copy
+state that TF-A does not reconcile with the mainline u-boot setup: PI frequency copies, LPDDR4
+FSP-OP/FSP-WR mode register state, and u-boot 400 MHz values left in controller copy 0 that
+TF-A does not regenerate. Next diagnostic if resumed: switch 800 -> 400 MHz (a rate the TPL
+trained) to test TF-A DFS after mainline u-boot independently of 856 MHz.
