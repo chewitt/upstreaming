@@ -89,3 +89,53 @@ LPDDR4 params, with DDR left at 800 MHz.
   rate is not the whole story.
 - The devfreq `simple_ondemand` governor (DFI load) would also lower the rate when idle;
   keep the experiment on `userspace`/`performance` until the effect on video is known.
+
+## Result 1: hard hang on the first switch (2026-10-28)
+
+With the DMC node enabled, `modprobe rk3399_dmc` returns and about a second later the
+board hangs without any kernel or TF-A output; u-boot then reports `Reset cause: WDOG`.
+`simple_ondemand` requests 856 MHz straight away, so the first DFS call is the suspect.
+
+### Why: controller and PHY frequency sets are paired differently
+
+The Denali controller (CTL) and PHY each keep several frequency copies. The controller copy
+in use is `CTL_REG(ch, 111)` bits 17:16. `DENALI_CTL_19` gives the DFI bus frequency each
+controller copy drives (`DFIBUS_FREQ_F0/F1/F2`), which selects the PHY copy.
+`PHY_REG(ch, 896)` bits 9:8 (`PHY_FREQ_SEL_INDEX`) only choose which PHY copy register
+writes update (TRM Part 1, DENALI_PHY_896).
+
+| Loader | `DENALI_CTL_19` (F0/F1/F2) | Controller copy -> PHY copy |
+|---|---|---|
+| coreboot (gru, LPDDR3) | 0x00020100 (0/1/2) | 0->0, 1->1 |
+| mainline u-boot LPDDR4 | 0x00000102 (2/1/0) | 0->1, 1->0, 2->3 (`lpddr4_phy_fn` = {1, 0, 0xb}) |
+
+The u-boot TPL trains at 400 MHz on controller copy 0 / PHY copy 1 and finishes at 800 MHz
+on controller copy 1 / PHY copy 0 (`set_rate_index(dram, params, 1)`).
+
+TF-A `dfs.c` assumes controller copy n uses PHY copy n. `dram_dfs_init()` reads the
+current controller copy (1); `prepare_ddr_timing()` picks the other one (0) and calls
+`gen_rk3399_phy_params(..., 0)`, which writes PHY copy 0, the copy in use. Memory access
+breaks before the M0 even starts the switch.
+
+The DFI-frequency-to-PHY-copy rule itself is not documented in the TRM, and the coreboot
+and u-boot pairings for DFI value 1 disagree (PHY 1 vs PHY 0), so it may depend on DRAM
+type. TF-A cannot derive the PHY copy from `DENALI_CTL_19` alone with what is known.
+
+### TF-A fix (proposal)
+
+Keep a controller-copy -> PHY-copy table in `rk3399_dram_status`, filled in
+`dram_dfs_init()`: identity by default, and {1, 0} when the DRAM is LPDDR4 and
+`DENALI_CTL_19` holds the mainline u-boot value 0x00000102. Use it wherever DFS passes the
+controller index to PHY code:
+
+- `prepare_ddr_timing()`: `gen_rk3399_phy_params(..., phy_index(index))` (this also covers
+  the DLL bypass setup inside it);
+- `dram_dfs_init()`: `PHY_FREQ_SEL_INDEX` for the current copy.
+
+The controller side (CTL/PI timings, CIC `PARAM_FREQ_SELECT`, trefi per copy) stays on the
+controller index. Suspend/resume (`suspend.c`) also writes `PHY_FREQ_SEL_INDEX` and needs
+the same mapping before it could be used; LibreELEC does not suspend.
+
+Check first, from the u-boot console (stop autoboot): `md.l 0xffa8004c 1` (DENALI_CTL_19)
+and `md.l 0xffa801bc 1` (DENALI_CTL_111, bits 17:16 = current copy) should read 0x102 and
+copy 1 on the ROC-PC. Channel 1 is at 0xffa88000.
