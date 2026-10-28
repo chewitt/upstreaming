@@ -174,3 +174,18 @@ sample data alignment on I2S: the vendor `rockchip_i2s_tdm` driver notes that th
 ignores the first frame-sync cycle and writes one padding frame before starting transmission,
 but only enables that for the RK3588 HDMI I2S. A per-channel `speaker-test` is pending.
 
+
+## Cover letter notes
+
+- **Other RK33XX chips:** the same IEC958 to BPCUV translation is ported to `rockchip_i2s` for
+  the older chips that feed dw-hdmi from it. It is enabled only for `rk3328-i2s` and
+  `rk3399-i2s` (dw-hdmi v2.11a), and the LibreELEC alsa conf routes "RK3328 HDMI" and
+  "RK3399 HDMI" the same way as RK356X. The change probably extends to other RK32XX/RK33XX chips with
+  dw-hdmi on `rockchip_i2s`, such as RK3228/RK3229 and RK3288. These are untested, so they are
+  left out. Enabling one is a match-data flag plus the alsa conf mapping, and is a follow-up
+  for someone with hardware to test on. RK3288 needs a check first: it has dw-hdmi v2.00a,
+  which predates the insert_pcuv control, and NLPCM/HBR support there is unconfirmed.
+- **RK3399 DisplayPort:** cdn-dp also registers hdmi-codec, and the translation is keyed on an
+  hdmi-codec link, not on dw-hdmi. The Gru Chromebooks (`rk3399-gru-sound`, `i2s0`) link
+  cdn-dp, so IEC958 subframes to DP there would be rewritten as well. Before posting, restrict
+  the check to a dw-hdmi codec, or state why it cannot happen.
