@@ -10,6 +10,12 @@ Patch tracking for Amlogic and Rockchip upstreaming efforts
 - [AV1 hardware decode on S4](amlogic/s4-av1-decode.md): what the vendor AV1 decoder does
   and what amvdec needs to drive it through the stateless V4L2 AV1 API.
 
+## Samsung
+
+- [Exynos 5422 (Odroid XU4) hardware decode](samsung/exynos5422-mfc-decode.md): s5p-mfc
+  MFC v7 status, the missing YUV planes, the unmerged GScaler local-path series, memeka's
+  FFmpeg converter branches, and options for a current stack.
+
 ## Rockchip
 
 - [RK3576 VDPU383 decode performance](rockchip/rk3576-vdpu383-performance.md): cover-letter
